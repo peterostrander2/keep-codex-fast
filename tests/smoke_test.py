@@ -41,7 +41,20 @@ def make_fake_home(root: Path) -> dict[str, Path]:
 
     (codex_home / ".codex-global-state.json").write_text('{"pinned-thread-ids":[]}', encoding="utf-8")
     (codex_home / "config.toml").write_text(
-        '[projects."C:\\\\DefinitelyMissingKeepCodexFast"]\ntrust_level = "trusted"\n',
+        'model = "gpt-test"\n'
+        'model_reasoning_effort = "low"\n'
+        '[projects."C:\\\\DefinitelyMissingKeepCodexFast"]\ntrust_level = "trusted"\n'
+        '[mcp_servers.example]\ncommand = "example"\n'
+        '[mcp_servers.example.env]\nPRIVATE_TOKEN = "must-not-print"\n',
+        encoding="utf-8",
+    )
+    (codex_home / "AGENTS.md").write_text("one\ntwo\n", encoding="utf-8")
+    (codex_home / "skills" / "example").mkdir(parents=True)
+    (codex_home / "skills" / "example" / "SKILL.md").write_text("---\nname: example\n---\n", encoding="utf-8")
+    (codex_home / "agents").mkdir()
+    (codex_home / "agents" / "summariser.toml").write_text('name = "summariser"\n', encoding="utf-8")
+    (codex_home / "hooks.json").write_text(
+        '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"safe-hook"}]}]}}',
         encoding="utf-8",
     )
 
@@ -108,6 +121,16 @@ def assert_report_mode(module) -> None:
         assert "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" not in text
         assert "Old test thread" not in text
         assert str(paths["codex_home"]) not in text
+        assert "context_footprint" in text
+        assert "agents_md_bytes 8" in text
+        assert "agents_md_lines 2" in text
+        assert "user_skill_count 1" in text
+        assert "helper_agent_count 1" in text
+        assert "mcp_server_count 1" in text
+        assert "hook_command_count 1" in text
+        assert "model gpt-test" in text
+        assert "model_reasoning_effort low" in text
+        assert "must-not-print" not in text
 
 
 def assert_backup_only_mode(module) -> None:

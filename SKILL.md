@@ -36,6 +36,9 @@ python scripts/keep_codex_fast.py
 ```
 
 3. Summarize:
+   - always-loaded `AGENTS.md` bytes, lines, configured budget, and pressure
+   - configured user-skill, helper-agent, MCP-server, and hook counts
+   - configured model and reasoning effort, without printing commands or secrets
    - active session size
    - archived session size
    - largest active sessions
@@ -76,6 +79,8 @@ If the user wants automation and the Codex app automation tool is available, cre
 - Moves stale worktrees to `~/.codex/archived_worktrees/`.
 - Rotates `logs_2.sqlite*` into `~/.codex/archived_logs/` only when above the threshold.
 - Reports heavy Node processes without killing them.
+- Reports prompt-adjacent context footprint without changing models, hooks,
+  plugins, MCP servers, skills, or instruction files.
 
 Report mode does none of those mutations. It only prints counts and pseudonymous candidates. Use `--details` when raw IDs, titles, or paths are needed for diagnosis.
 

@@ -16,6 +16,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -30,6 +31,7 @@ TEMP_PROJECT_RE = re.compile(
     r"(\\AppData\\Local\\Temp\\|/AppData/Local/Temp/|\\Temp\\codex-|/Temp/codex-|\\Temp\\spark-|/Temp/spark-)",
     re.I,
 )
+DEFAULT_AGENTS_MD_LIMIT_BYTES = 32 * 1024
 
 
 @dataclass
@@ -87,6 +89,66 @@ def mb(value: int) -> str:
 
 def report(line: str) -> None:
     print(line)
+
+
+def context_footprint(codex_home: Path) -> None:
+    """Report prompt-adjacent configuration without printing commands or secrets."""
+    report("context_footprint")
+
+    config: dict = {}
+    config_path = codex_home / "config.toml"
+    if config_path.exists():
+        try:
+            config = tomllib.loads(config_path.read_text(encoding="utf-8-sig"))
+            report("context_config_parse_ok true")
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+            report("context_config_parse_ok false")
+    else:
+        report("context_config_parse_ok missing")
+
+    agents_path = codex_home / "AGENTS.md"
+    try:
+        agents_bytes = agents_path.read_bytes() if agents_path.exists() else b""
+    except OSError:
+        agents_bytes = b""
+    agents_lines = agents_bytes.count(b"\n") + (1 if agents_bytes and not agents_bytes.endswith(b"\n") else 0)
+    raw_limit = config.get("project_doc_max_bytes", DEFAULT_AGENTS_MD_LIMIT_BYTES)
+    agents_limit = raw_limit if isinstance(raw_limit, int) and raw_limit > 0 else DEFAULT_AGENTS_MD_LIMIT_BYTES
+    agents_pct = (len(agents_bytes) / agents_limit * 100) if agents_limit else 0.0
+    report(f"agents_md_bytes {len(agents_bytes)}")
+    report(f"agents_md_lines {agents_lines}")
+    report(f"agents_md_limit_bytes {agents_limit}")
+    report(f"agents_md_budget_pct {agents_pct:.1f}")
+    report(f"agents_md_pressure {'warn' if agents_pct >= 80 else 'ok'}")
+
+    skills_root = codex_home / "skills"
+    skill_count = sum(1 for path in skills_root.iterdir() if path.is_dir() and (path / "SKILL.md").is_file()) if skills_root.exists() else 0
+    agents_root = codex_home / "agents"
+    helper_count = sum(1 for path in agents_root.rglob("*.toml") if path.is_file()) if agents_root.exists() else 0
+    mcp_servers = config.get("mcp_servers", {})
+    mcp_count = len(mcp_servers) if isinstance(mcp_servers, dict) else 0
+    report(f"user_skill_count {skill_count}")
+    report(f"helper_agent_count {helper_count}")
+    report(f"mcp_server_count {mcp_count}")
+
+    hooks_count = 0
+    hooks_path = codex_home / "hooks.json"
+    try:
+        hook_groups = json.loads(hooks_path.read_text(encoding="utf-8")).get("hooks", {})
+        for groups in hook_groups.values():
+            if not isinstance(groups, list):
+                continue
+            for group in groups:
+                if isinstance(group, dict) and isinstance(group.get("hooks"), list):
+                    hooks_count += len(group["hooks"])
+    except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+        pass
+    report(f"hook_command_count {hooks_count}")
+
+    model = config.get("model")
+    effort = config.get("model_reasoning_effort")
+    report(f"model {model if isinstance(model, str) else 'unset'}")
+    report(f"model_reasoning_effort {effort if isinstance(effort, str) else 'unset'}")
 
 
 def sqlite_connect(path: Path, *, readonly: bool) -> sqlite3.Connection:
@@ -547,6 +609,7 @@ def run(args: argparse.Namespace) -> int:
         report("state_db_missing")
 
     prune_config(codex_home, backup_root, effective_apply, effective_backup)
+    context_footprint(codex_home)
     move_stale_worktrees(codex_home, backup_root, args.worktree_older_than_days, stamp, effective_apply)
     rotate_logs(codex_home, args.rotate_logs_above_mb, stamp, effective_apply)
     verify_sizes(codex_home)
