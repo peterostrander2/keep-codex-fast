@@ -7,3 +7,4 @@ node_modules/
 dist/
 build/
 .pytest_cache/
+docs/codex-handoffs/
