@@ -91,64 +91,124 @@ def report(line: str) -> None:
     print(line)
 
 
-def context_footprint(codex_home: Path) -> None:
-    """Report prompt-adjacent configuration without printing commands or secrets."""
-    report("context_footprint")
-
-    config: dict = {}
-    config_path = codex_home / "config.toml"
-    if config_path.exists():
-        try:
-            config = tomllib.loads(config_path.read_text(encoding="utf-8-sig"))
-            report("context_config_parse_ok true")
-        except (OSError, UnicodeError, tomllib.TOMLDecodeError):
-            report("context_config_parse_ok false")
-    else:
-        report("context_config_parse_ok missing")
-
-    agents_path = codex_home / "AGENTS.md"
+def inventory_file(path: Path, parser, *, binary: bool = False):
+    """Return a typed state without exposing file content or exception details."""
     try:
-        agents_bytes = agents_path.read_bytes() if agents_path.exists() else b""
+        raw = path.read_bytes() if binary else path.read_text(encoding="utf-8-sig")
+        return "OK", parser(raw)
+    except FileNotFoundError:
+        return "MISSING", None
+    except (IsADirectoryError, NotADirectoryError, UnicodeError, ValueError, TypeError):
+        return "MALFORMED", None
     except OSError:
-        agents_bytes = b""
-    agents_lines = agents_bytes.count(b"\n") + (1 if agents_bytes and not agents_bytes.endswith(b"\n") else 0)
-    raw_limit = config.get("project_doc_max_bytes", DEFAULT_AGENTS_MD_LIMIT_BYTES)
-    agents_limit = raw_limit if isinstance(raw_limit, int) and raw_limit > 0 else DEFAULT_AGENTS_MD_LIMIT_BYTES
-    agents_pct = (len(agents_bytes) / agents_limit * 100) if agents_limit else 0.0
-    report(f"agents_md_bytes {len(agents_bytes)}")
-    report(f"agents_md_lines {agents_lines}")
-    report(f"agents_md_limit_bytes {agents_limit}")
-    report(f"agents_md_budget_pct {agents_pct:.1f}")
-    report(f"agents_md_pressure {'warn' if agents_pct >= 80 else 'ok'}")
+        return "UNREADABLE", None
 
-    skills_root = codex_home / "skills"
-    skill_count = sum(1 for path in skills_root.iterdir() if path.is_dir() and (path / "SKILL.md").is_file()) if skills_root.exists() else 0
-    agents_root = codex_home / "agents"
-    helper_count = sum(1 for path in agents_root.rglob("*.toml") if path.is_file()) if agents_root.exists() else 0
-    mcp_servers = config.get("mcp_servers", {})
-    mcp_count = len(mcp_servers) if isinstance(mcp_servers, dict) else 0
-    report(f"user_skill_count {skill_count}")
-    report(f"helper_agent_count {helper_count}")
-    report(f"mcp_server_count {mcp_count}")
 
-    hooks_count = 0
-    hooks_path = codex_home / "hooks.json"
+def inventory_config(raw: str) -> dict:
+    config = tomllib.loads(raw)
+    limit = config.get("project_doc_max_bytes", DEFAULT_AGENTS_MD_LIMIT_BYTES)
+    if type(limit) is not int or limit <= 0:
+        raise ValueError("invalid instruction limit")
+    if not isinstance(config.get("mcp_servers", {}), dict):
+        raise ValueError("invalid server table")
+    for key in ("model", "model_reasoning_effort"):
+        if key in config and (not isinstance(config[key], str) or
+                              not config[key] or any(c.isspace() for c in config[key])):
+            raise ValueError("invalid model setting")
+    return config
+
+
+def inventory_hooks(raw: str) -> int:
+    data = json.loads(raw)
+    if not isinstance(data, dict) or not isinstance(data.get("hooks"), dict):
+        raise ValueError("invalid hooks object")
+    count = 0
+    for groups in data["hooks"].values():
+        if not isinstance(groups, list):
+            raise ValueError("invalid hook groups")
+        for group in groups:
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                raise ValueError("invalid hook group")
+            for hook in group["hooks"]:
+                if not isinstance(hook, dict) or not isinstance(hook.get("type"), str):
+                    raise ValueError("invalid hook")
+                if hook["type"] == "command":
+                    if not isinstance(hook.get("command"), str) or not hook["command"].strip():
+                        raise ValueError("invalid hook command")
+                    count += 1
+    return count
+
+
+def inventory_directory(path: Path, *, skills: bool) -> tuple[str, int | None]:
+    """Count entries; never substitute a partial count after a traversal failure."""
+    def count_entries(directory: Path) -> int:
+        count = 0
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=skills):
+                    if skills:
+                        with os.scandir(entry.path) as children:
+                            count += sum(child.name == "SKILL.md" and child.is_file()
+                                         for child in children)
+                    else:
+                        count += count_entries(Path(entry.path))
+                elif not skills and entry.name.endswith(".toml") and entry.is_file():
+                    count += 1
+        return count
+
     try:
-        hook_groups = json.loads(hooks_path.read_text(encoding="utf-8")).get("hooks", {})
-        for groups in hook_groups.values():
-            if not isinstance(groups, list):
-                continue
-            for group in groups:
-                if isinstance(group, dict) and isinstance(group.get("hooks"), list):
-                    hooks_count += len(group["hooks"])
-    except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
-        pass
-    report(f"hook_command_count {hooks_count}")
+        path.stat()
+    except FileNotFoundError:
+        return "MISSING", None
+    except OSError:
+        return "UNREADABLE", None
+    try:
+        return "OK", count_entries(path)
+    except NotADirectoryError:
+        return "MALFORMED", None
+    except OSError:
+        return "UNREADABLE", None
 
-    model = config.get("model")
-    effort = config.get("model_reasoning_effort")
-    report(f"model {model if isinstance(model, str) else 'unset'}")
-    report(f"model_reasoning_effort {effort if isinstance(effort, str) else 'unset'}")
+
+def context_footprint(codex_home: Path) -> None:
+    """Inventory only the selected Codex home, not loaded context or usage."""
+    report("local_configuration_inventory")
+    report("inventory_scope selected_codex_home_only")
+    unavailable = "UNAVAILABLE"
+    config_state, config = inventory_file(codex_home / "config.toml", inventory_config)
+    report(f"config_toml_state {config_state}")
+    if config_state == "OK":
+        limit = config.get("project_doc_max_bytes", DEFAULT_AGENTS_MD_LIMIT_BYTES)
+        limit_source = "CONFIGURED_OVERRIDE" if "project_doc_max_bytes" in config else "DEFAULT"
+    else:
+        limit, limit_source = None, unavailable
+    report(f"global_agents_md_limit_bytes {limit if limit is not None else unavailable}")
+    report(f"global_agents_md_limit_source {limit_source}")
+
+    agents_state, agents_raw = inventory_file(
+        codex_home / "AGENTS.md", lambda raw: (raw.decode("utf-8"), raw)[1], binary=True)
+    report(f"global_agents_md_state {agents_state}")
+    size = len(agents_raw) if agents_raw is not None else None
+    lines = (agents_raw.count(b"\n") + int(bool(agents_raw) and not agents_raw.endswith(b"\n"))) if agents_raw is not None else unavailable
+    report(f"global_agents_md_bytes {size if size is not None else unavailable}")
+    report(f"global_agents_md_lines {lines}")
+    pct = size / limit * 100 if size is not None and limit is not None else None
+    report(f"global_agents_md_budget_pct {pct:.1f}" if pct is not None else f"global_agents_md_budget_pct {unavailable}")
+    report(f"global_agents_md_pressure {('warn' if pct >= 80 else 'ok') if pct is not None else unavailable}")
+
+    for name, skills, metric in (("skills", True, "codex_home_skill_count"),
+                                 ("agents", False, "codex_home_helper_agent_count")):
+        state, count = inventory_directory(codex_home / name, skills=skills)
+        report(f"{name}_directory_state {state}")
+        report(f"{metric} {count if state == 'OK' else unavailable}")
+    mcp_count = len(config.get("mcp_servers", {})) if config_state == "OK" else unavailable
+    report(f"configured_mcp_server_count {mcp_count}")
+    hooks_state, hooks_count = inventory_file(codex_home / "hooks.json", inventory_hooks)
+    report(f"hooks_json_state {hooks_state}")
+    report(f"configured_hook_command_count {hooks_count if hooks_state == 'OK' else unavailable}")
+    for key in ("model", "model_reasoning_effort"):
+        value = config.get(key, "UNSET") if config_state == "OK" else unavailable
+        report(f"config_toml_{key} {value}")
 
 
 def sqlite_connect(path: Path, *, readonly: bool) -> sqlite3.Connection:

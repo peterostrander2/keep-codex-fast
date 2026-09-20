@@ -36,9 +36,11 @@ python scripts/keep_codex_fast.py
 ```
 
 3. Summarize:
-   - always-loaded `AGENTS.md` bytes, lines, configured budget, and pressure
-   - configured user-skill, helper-agent, MCP-server, and hook counts
-   - configured model and reasoning effort, without printing commands or secrets
+   - selected Codex-home `AGENTS.md` bytes and lines only; no project instruction chain
+   - instruction limit labeled `DEFAULT` (32 KiB) or `CONFIGURED_OVERRIDE`
+   - immediate Codex-home skill entries and recursive helper-agent TOML entries
+   - MCP servers and command hooks configured locally, without claiming they loaded or ran
+   - model and effort from the selected Codex-home `config.toml` only
    - active session size
    - archived session size
    - largest active sessions
@@ -81,6 +83,28 @@ If the user wants automation and the Codex app automation tool is available, cre
 - Reports heavy Node processes without killing them.
 - Reports prompt-adjacent context footprint without changing models, hooks,
   plugins, MCP servers, skills, or instruction files.
+
+The `local_configuration_inventory` section covers the selected Codex home
+(default `~/.codex`; the existing CLI/home override still applies):
+
+- `global_agents_md_*`: only that home's `AGENTS.md`.
+- `codex_home_skill_count`: immediate `skills/*/SKILL.md` entries, excluding
+  nested bundled and plugin collections.
+- `codex_home_helper_agent_count`: recursive `agents/**/*.toml` entries;
+  directory symlinks are not traversed.
+- `configured_mcp_server_count` and `configured_hook_command_count`: configured
+  entries, not evidence of loading or execution. Only command-type hooks count.
+- `config_toml_model` and `config_toml_model_reasoning_effort`: file values,
+  not the effective model or effort of a running session.
+
+Each input (`AGENTS.md`, `config.toml`, `hooks.json`, `skills/`, `agents/`)
+has a separate `OK`, `MISSING`, `UNREADABLE`, or `MALFORMED` state.
+Failed measurements and dependent values are `UNAVAILABLE`; a measured empty
+input can legitimately produce zero. A readable configuration with an absent
+model/effort setting reports `UNSET`. The 32 KiB default applies only when the
+configuration is readable and has no override; missing or invalid configuration
+leaves the limit and pressure unavailable. Instruction pressure is a local
+80% warning heuristic, not a measure of loaded context or usage reduction.
 
 Report mode does none of those mutations. It only prints counts and pseudonymous candidates. Use `--details` when raw IDs, titles, or paths are needed for diagnosis.
 
