@@ -426,6 +426,8 @@ def assert_normal_apply_does_not_repair_thread_metadata(module) -> None:
 
 
 def main() -> int:
+    from test_publish import check
+    check()
     module = load_module()
     assert_inventory_failure_regression(module)
     assert_inventory_states(module)

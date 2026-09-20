@@ -36,6 +36,15 @@ There are three modes:
 
 ## Default Workflow
 
+For an approved release of this fork, after committing run
+`python3 scripts/publish.py --receipt /private/var/tmp/keep-codex-fast-publish.json`.
+It requires clean `main`, pushes to `peterostrander2/keep-codex-fast`, waits for
+CI on that exact SHA, and dispatches the existing workflow once if absent.
+Progress and terminal receipts stay outside the repository. Reuse the receipt
+when resuming to avoid duplicate dispatches. Failed tests are never retried
+automatically. CI waits are bounded to five minutes plus in-flight API calls
+(60-second timeout each). This adds no scheduler or cleanup action.
+
 1. Reassure the user: the first run is read-only, privacy-safe, and the skill archives instead of deleting when changes are later applied.
 2. Run the bundled script in report mode:
 
